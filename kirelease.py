@@ -3,13 +3,13 @@
 from asyncio import subprocess
 from ctypes import ArgumentError
 from genericpath import isdir
+from operator import indexOf
 from platform import release
 import sys
 from os import listdir, getcwd, mkdir, path, rename
 from os.path import isdir, join
 import time
 from xvfbwrapper import Xvfb
-# Import the KiCad python helper module and the csv formatter
 import kicad_netlist_reader
 import csv    
 import shutil
@@ -23,13 +23,31 @@ from utils import (
     xdotool
 )
 
+KICAD_SCH_EXTENSION = '.kicad_sch'
+KICAD_PCB_EXTENSION = '.kicad_pcb'
 RELEASE_DIRECTORY_NAME = 'release'
 pcb_file = ''
 
-def getReleaseNumber(outDir):
+def getProjectName(outputDir):
+    # expected format: 'projectName_release_0', 'projectName_release_1', ...
+    releaseFiles = listdir(outputDir)
+    if len(releaseFiles) != 0:
+        temp = releaseFiles[0].split('_')
+        if len(temp) != 0 and temp[0] != '':            
+            print("Project name is '" + temp[0] + "'. Got it from previous releases.")
+            return temp[0]
+
+    if len(sys.argv) == 4:
+            return sys.argv[3]
+    else:
+        print("Missing <projectName>, must be specified at first release.\n"\
+            "Use kirelease help for usage.")
+        exit(0)
+
+def getReleaseNumber(outputDir):
     nextRelease = -1
 
-    for f in listdir(outDir): # expected format is 'project_rev_0', 'project_rev_1', ...
+    for f in listdir(outputDir): # expected format: 'projectName_release_0', 'projectName_release_1', ...
         temp = f.split('_')
         temp = int(temp[len(temp) - 1])
         if temp > nextRelease:
@@ -40,24 +58,23 @@ def getReleaseNumber(outDir):
     else:
         return nextRelease + 1
 
+def checkForOutputFolder(outputDir):
+    # check for release folder
+    if not path.isdir(outputDir):
+        mkdir(RELEASE_DIRECTORY_NAME)
+        print("'release' directory created")                
 
-def export_step(cwd, outputDir):
-    pcbFile = ''
-    for f in listdir(cwd):
-        if '.kicad_pcb' in f:
-            pcbFile = f.split('/')
-            pcbFile = pcbFile[len(pcbFile) - 1]
-            break 
-    with PopenContext(['kicad2step', pcbFile , '-o' + outputDir + '/model']) as kicad2step:
-        time.sleep(2)
+def export_step(pcbFile, outputDir):
+    with PopenContext(['kicad2step', pcbFile + '.kicad_pcb' , '-o' + outputDir + '/model']) as kicad2step:
+        time.sleep(5)
         kicad2step.terminate()
-    print("Exported 3D .step model in: " + outputDir + '/model')
 
+    print("Exported model.step")
 
 def export_gerbers(pcbFile, outputDir):
     #!/Applications/Kicad/kicad.app/Contents/Frameworks/Python.framework/Versions/Current/bin/python
 
-    board = pcbnew.LoadBoard(pcbFile)
+    board = pcbnew.LoadBoard(pcbFile + KICAD_PCB_EXTENSION)
 
     with_silkscreen = True # Silkscreen makes the boards slightly thicker
     with_paste = True
@@ -69,7 +86,7 @@ def export_gerbers(pcbFile, outputDir):
 
     # Set some important plot options
     popt.SetPlotFrameRef(False)
-    popt.SetLineWidth(pcbnew.FromMM(0.05))
+    #popt.SetLineWidth(pcbnew.FromMM(0.05))
     popt.SetAutoScale(False)
     popt.SetScale(1)
 
@@ -129,22 +146,23 @@ def export_gerbers(pcbFile, outputDir):
         for file in files:
             myzip.write(path.join(tempdir, file), file)
 
-    rename(path.join(tempdir, "zip"), outputDir)
+    shutil.move(path.join(tempdir, "zip"), outputDir + '/gerbers.zip')
 
     # Remove tempdir
     shutil.rmtree(tempdir)
 
-def export_bom(schFile, outputDir):
+    print("Exported gerbers.zip")
+
+def export_bom(annotationFile, outputDir, projectName):
     # Generate an instance of a generic netlist
-    net = kicad_netlist_reader.netlist(schFile)
+    net = kicad_netlist_reader.netlist(annotationFile)
 
     # Open a file to write to, if the file cannot be opened output to stdout
     try:
-        f = open(outputDir, 'w')
+        f = open(outputDir + '/bom.csv', 'w')
     except IOError:
-        e = "Can't open output file: " + outputDir
-        print(__file__, ":", e, sys.stderr)
-        f = sys.stdout
+        print("Can't open output file: " + outputDir + '/bom.csv')
+        exit(1)
 
     # Create a new csv writer object to use as the output formatter
     out = csv.writer(f, lineterminator='\n', delimiter=';', quotechar='\"', quoting=csv.QUOTE_ALL)
@@ -176,6 +194,8 @@ def export_bom(schFile, outputDir):
                     c.getField("Distributor Code"),
                     c.getField("Distributor")])
 
+    print("Exported bom.csv")
+
 def export_schematic(mainSchFile, outputDir):
     #with Xvfb(width=1280, height=720, colordepth=24):
     with PopenContext(['eeschema', mainSchFile]) as eeschema:
@@ -193,7 +213,7 @@ def export_schematic(mainSchFile, outputDir):
         time.sleep(0.3)
 
         # input output directory
-        xdotool(['type' , outputDir + '/schematic.pdf'])
+        xdotool(['type' , outputDir + '/'])
         time.sleep(0.3)
 
         # move to plot button by tabbing and press enter
@@ -204,54 +224,63 @@ def export_schematic(mainSchFile, outputDir):
         # wait for export to take place, 2 seconds should suffice
         time.sleep(2)
         eeschema.terminate()
-        print("Exported schematic .pdf in: " + outputDir + '/schematic.pdf')
 
-def export_bom():
-    print()
+    # rename the just exported schematic
+    for f in listdir(outputDir):
+        if '.pdf' in f:
+            rename(outputDir + '/' + f, outputDir + '/' + 'schematic.pdf')
+            break
+    
+    print("Exported schematic.pdf")
     
 if __name__ == '__main__':
+    
+    schFile = ''
+    pcbFile = ''
+    projectName = ''
+    cwd = getcwd()
+    outputDir = cwd + '/' + RELEASE_DIRECTORY_NAME
 
     if (len(sys.argv) == 1):
         print("Missing arguemnts, use 'kirelease help' for a guide")
         exit(0)
     
     if (sys.argv[1] == 'help'):
-        print("From the main directory of your KiCad project, use:\n\n"\
-            "Kirelease <root>.sch <project_name>\n\n"
-            "where main.sch is the root sheet in the schematic hirearchy\n"\
-            "If a 'release' folder is not present, one will be created.\n"\
-            "If <project_name> is not specified, the name of the root.sch file will be used as the project name")
+        print("From root of the KiCad project, use:\n\n"\
+            "kirelease <schFile> <pcbFile> <projectName>\n\n"
+            "<schFile> is the root .kicad_sch file in the schematic hirearchy\n"\
+            "<pcbFile> is the .kicad_pcb file\n"\
+            "<projectName> is the name for the output files, only needed for first release\n\n"\
+            "If a 'release' folder is not present, one will be created.")
         exit(0)
 
-    cwd = getcwd()
-    outputDir = cwd + '/' + RELEASE_DIRECTORY_NAME
+    schFile = cwd + '/' + sys.argv[1]
+    pcbFile = cwd + '/' + sys.argv[2]
 
-    # check for release folder
-    if not path.isdir(outputDir):
-        print("No 'realease' directory available, create one: (y/n)")
-        choice = input().lower()
-        if choice in ['y','n']:
-            if choice == 'n':
-                print("ok nevermind then!")
-                exit(0)
-            else:
-                print("'release' directory created")
-                mkdir(RELEASE_DIRECTORY_NAME)
+    checkForOutputFolder(outputDir)
+    projectName = getProjectName(outputDir)
+    releaseNumber = getReleaseNumber(outputDir)
 
-    fileToOpen = sys.argv[1].split("/")
-    fileToOpen = fileToOpen[len(fileToOpen) - 1].split(".")[0]
+    # update var with projectName and releaseNumber
+    outputDir = outputDir + '/' + projectName + '_release_' + str(releaseNumber)
 
-    # if not given as argument, take project name from root .sch file
-    if (len(sys.argv) == 3):
-        schPath = sys.argv[2]
+    print("Exporting '" + projectName + '_release_' + str(releaseNumber) + "' ...")
 
-    releaseNumber = getReleaseNumber(outputDir)     
-    outputDir = outputDir + '/' + fileToOpen + '_' + str(releaseNumber)
+    export_schematic(schFile, outputDir)
+    export_step(pcbFile, outputDir)
 
-    if not path.isdir(outputDir):
-        mkdir(outputDir)
+    schAnnotated = False
+    for f in listdir(cwd):
+        if '.xml' in f:
+            schAnnotated = True
+            break
+    if schAnnotated:
+        export_bom(schFile + '.xml', outputDir, projectName)
+    else:
+        print("Generating BOM requires a fully annotated schematic. Missing .xml file.")
+        exit(1)
 
-    export_schematic(schPath, outputDir)
-    export_step(cwd, outputDir)
-    # export_gerbers()
-    export_bom(fileToOpen, outputDir)
+    export_gerbers(pcbFile, outputDir)
+
+    print("Finished exporting '"+ projectName + '_release_' + str(releaseNumber) + "'")
+    
