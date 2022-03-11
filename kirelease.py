@@ -1,27 +1,17 @@
 #!/usr/bin/env python
 
-from asyncio import subprocess
-from ctypes import ArgumentError
-from genericpath import isdir
-from operator import indexOf
-from platform import release
-import sys
 from os import listdir, getcwd, mkdir, path, rename
-from os.path import isdir, join
+import sys
 import time
-from xvfbwrapper import Xvfb
-import kicad_netlist_reader
 import csv    
 import shutil
 import zipfile
 import tempfile
+
+import kicad_netlist_reader
 import pcbnew
 
-
-from utils import (
-    PopenContext,
-    xdotool
-)
+from utils import xdotool, PopenContext, waitForWindow
 
 KICAD_SCH_EXTENSION = '.kicad_sch'
 KICAD_PCB_EXTENSION = '.kicad_pcb'
@@ -37,7 +27,7 @@ def getProjectName(outputDir):
             print("Project name is '" + temp[0] + "'. Got it from previous releases.")
             return temp[0]
 
-    if len(sys.argv) == 4:
+    if len(sys.argv) >= 4:
             return sys.argv[3]
     else:
         print("Missing <projectName>, must be specified at first release.\n"\
@@ -71,20 +61,17 @@ def export_step(pcbFile, outputDir):
 
     print("Exported model.step")
 
-def export_gerbers(pcbFile, outputDir):
-    #!/Applications/Kicad/kicad.app/Contents/Frameworks/Python.framework/Versions/Current/bin/python
-
+def export_gerbers(pcbFile, outputDir, withSilkScreen):
     board = pcbnew.LoadBoard(pcbFile + KICAD_PCB_EXTENSION)
 
-    with_silkscreen = True # Silkscreen makes the boards slightly thicker
-    with_paste = True
-    with_4layers = board.GetDesignSettings().GetCopperLayerCount() == 4
+    withPaste = True
+    with4layers = board.GetDesignSettings().GetCopperLayerCount() == 4
 
-    # Configure plotter
+    # configure plotter
     pctl = pcbnew.PLOT_CONTROLLER(board)
     popt = pctl.GetPlotOptions()
 
-    # Set some important plot options
+    # set plot options
     popt.SetPlotFrameRef(False)
     #popt.SetLineWidth(pcbnew.FromMM(0.05))
     popt.SetAutoScale(False)
@@ -98,49 +85,49 @@ def export_gerbers(pcbFile, outputDir):
     popt.SetDrillMarksType(pcbnew.PCB_PLOT_PARAMS.NO_DRILL_SHAPE)
     popt.SetSkipPlotNPTH_Pads(True)
 
-    # Render Plot Files
+    # set plot layers
     tempdir = tempfile.mkdtemp()
     popt.SetOutputDirectory(tempdir)
 
-    plot_plan = [
+    plotPlan = [
         ( "F_Cu", pcbnew.F_Cu, "Top layer" ),
         ( "B_Cu", pcbnew.B_Cu, "Bottom layer" ),
         ( "F_Mask", pcbnew.F_Mask, "Mask top" ),
         ( "B_Mask", pcbnew.B_Mask, "Mask bottom" ),
         ( "Edge_Cuts", pcbnew.Edge_Cuts, "Edges" ),
     ]
-    if with_4layers:
-        plot_plan += [
+    if with4layers:
+        plotPlan += [
             ( "In1_Cu", pcbnew.In1_Cu, "Top internal layer" ),
             ( "In2_Cu", pcbnew.In2_Cu, "Bottom internal layer" ),
         ]
-    if with_silkscreen:
-        plot_plan += [
+    if withSilkScreen:
+        plotPlan += [
             ( "F_Silk", pcbnew.F_SilkS, "Silk top" ),
             ( "B_Silk", pcbnew.B_SilkS, "Silk top" ),
         ]
-    if with_paste:
-        plot_plan += [
+    if withPaste:
+        plotPlan += [
             ( "F_Paste", pcbnew.F_Paste, "Paste top" ),
             ( "B_Paste", pcbnew.B_Paste, "Paste Bottom" ),
         ]
 
-    for layer_info in plot_plan:
-        pctl.SetLayer(layer_info[1])
-        pctl.OpenPlotfile(layer_info[0], pcbnew.PLOT_FORMAT_GERBER, layer_info[2])
+    for layerInfo in plotPlan:
+        pctl.SetLayer(layerInfo[1])
+        pctl.OpenPlotfile(layerInfo[0], pcbnew.PLOT_FORMAT_GERBER, layerInfo[2])
         pctl.PlotLayer()
 
-    # Render Drill Files
-    drlwriter = pcbnew.EXCELLON_WRITER(board)
-    drlwriter.SetMapFileFormat(pcbnew.PLOT_FORMAT_GERBER)
-    drlwriter.SetOptions(aMirror=False, aMinimalHeader=False,
+    # plot drill files
+    drlWriter = pcbnew.EXCELLON_WRITER(board)
+    drlWriter.SetMapFileFormat(pcbnew.PLOT_FORMAT_GERBER)
+    drlWriter.SetOptions(aMirror=False, aMinimalHeader=False,
                         aOffset=pcbnew.wxPoint(0, 0), aMerge_PTH_NPTH=False)
-    drlwriter.SetFormat(True, pcbnew.EXCELLON_WRITER.DECIMAL_FORMAT, 3, 3)
-    drlwriter.CreateDrillandMapFilesSet( pctl.GetPlotDirName(), True, False )
+    drlWriter.SetFormat(True, pcbnew.EXCELLON_WRITER.DECIMAL_FORMAT, 3, 3)
+    drlWriter.CreateDrillandMapFilesSet( pctl.GetPlotDirName(), True, False )
 
     pctl.ClosePlot()
 
-    # Archive files
+    # zip files
     files = listdir(tempdir)
     with zipfile.ZipFile(path.join(tempdir, "zip"), 'w', zipfile.ZIP_DEFLATED) as myzip:
         for file in files:
@@ -148,7 +135,7 @@ def export_gerbers(pcbFile, outputDir):
 
     shutil.move(path.join(tempdir, "zip"), outputDir + '/gerbers.zip')
 
-    # Remove tempdir
+    # remove tempdir
     shutil.rmtree(tempdir)
 
     print("Exported gerbers.zip")
@@ -197,24 +184,19 @@ def export_bom(annotationFile, outputDir, projectName):
     print("Exported bom.csv")
 
 def export_schematic(mainSchFile, outputDir):
-    #with Xvfb(width=1280, height=720, colordepth=24):
     with PopenContext(['eeschema', mainSchFile]) as eeschema:
-        time.sleep(0.3)
+
         # search for eeschema window and focus it
-        xdotool(['search', '--name', 'Schematic Editor'])
-        time.sleep(0.3)
+        waitForWindow('Schematic Editor')
 
         # open plotting window
         xdotool(['key' ,'shift+ctrl+p'])
-        time.sleep(0.3)
 
         # search for plotting window and focus it
-        xdotool(['search', '--name', 'Plot Schematic Options'])
-        time.sleep(0.3)
+        waitForWindow('Plot Schematic Options')
 
         # input output directory
         xdotool(['type' , outputDir + '/'])
-        time.sleep(0.3)
 
         # move to plot button by tabbing and press enter
         for x in range(1,19):   
@@ -222,7 +204,7 @@ def export_schematic(mainSchFile, outputDir):
         xdotool(['key','enter'])
 
         # wait for export to take place, 2 seconds should suffice
-        time.sleep(2)
+        time.sleep(3)
         eeschema.terminate()
 
     # rename the just exported schematic
@@ -250,7 +232,8 @@ if __name__ == '__main__':
             "kirelease <schFile> <pcbFile> <projectName>\n\n"
             "<schFile> is the root .kicad_sch file in the schematic hirearchy\n"\
             "<pcbFile> is the .kicad_pcb file\n"\
-            "<projectName> is the name for the output files, only needed for first release\n\n"\
+            "<projectName> is the name for the output files, only needed for first release\n"\
+            "--no-silk to not plot silkscreen layers\n\n"\
             "If a 'release' folder is not present, one will be created.")
         exit(0)
 
@@ -280,7 +263,7 @@ if __name__ == '__main__':
         print("Generating BOM requires a fully annotated schematic. Missing .xml file.")
         exit(1)
 
-    export_gerbers(pcbFile, outputDir)
+    export_gerbers(pcbFile, outputDir, False if '--no-silk' in sys.argv else True)
 
     print("Finished exporting '"+ projectName + '_release_' + str(releaseNumber) + "'")
     
