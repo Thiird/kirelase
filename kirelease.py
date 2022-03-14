@@ -11,7 +11,7 @@ import tempfile
 import kicad_netlist_reader
 import pcbnew
 
-from utils import xdotool, PopenContext, waitForWindow
+from utils import xdotool, PopenContext
 
 KICAD_SCH_EXTENSION = '.kicad_sch'
 KICAD_PCB_EXTENSION = '.kicad_pcb'
@@ -246,7 +246,7 @@ if __name__ == '__main__':
               "<schFile> is the root .kicad_sch file in the schematic hirearchy\n"
               "<pcbFile> is the .kicad_pcb file\n"
               "<projectName> is the name for the output files, only needed for first release\n"
-              "--no-silk to not plot silkscreen layers\n\n"
+              "--no-silk to not plot the silkscreen\n\n"
               "If a 'release' folder is not present, one will be created.")
         exit(0)
 
