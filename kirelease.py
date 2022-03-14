@@ -3,7 +3,7 @@
 from os import listdir, getcwd, mkdir, path, rename
 import sys
 import time
-import csv    
+import csv
 import shutil
 import zipfile
 import tempfile
@@ -18,26 +18,30 @@ KICAD_PCB_EXTENSION = '.kicad_pcb'
 RELEASE_DIRECTORY_NAME = 'release'
 pcb_file = ''
 
+
 def getProjectName(outputDir):
     # expected format: 'projectName_release_0', 'projectName_release_1', ...
     releaseFiles = listdir(outputDir)
     if len(releaseFiles) != 0:
         temp = releaseFiles[0].split('_')
-        if len(temp) != 0 and temp[0] != '':            
-            print("Project name is '" + temp[0] + "'. Got it from previous releases.")
+        if len(temp) != 0 and temp[0] != '':
+            print("Project name is '" +
+                  temp[0] + "'. Got it from previous releases.")
             return temp[0]
 
     if len(sys.argv) >= 4:
-            return sys.argv[3]
+        return sys.argv[3]
     else:
-        print("Missing <projectName>, must be specified at first release.\n"\
-            "Use kirelease help for usage.")
+        print("Missing <projectName>, must be specified at first release.\n"
+              "Use kirelease help for usage.")
         exit(0)
+
 
 def getReleaseNumber(outputDir):
     nextRelease = -1
 
-    for f in listdir(outputDir): # expected format: 'projectName_release_0', 'projectName_release_1', ...
+    # expected format: 'projectName_release_0', 'projectName_release_1', ...
+    for f in listdir(outputDir):
         temp = f.split('_')
         temp = int(temp[len(temp) - 1])
         if temp > nextRelease:
@@ -48,18 +52,21 @@ def getReleaseNumber(outputDir):
     else:
         return nextRelease + 1
 
+
 def checkForOutputFolder(outputDir):
     # check for release folder
     if not path.isdir(outputDir):
         mkdir(RELEASE_DIRECTORY_NAME)
-        print("'release' directory created")                
+        print("'release' directory created")
+
 
 def export_step(pcbFile, outputDir):
-    with PopenContext(['kicad2step', pcbFile + '.kicad_pcb' , '-o' + outputDir + '/model']) as kicad2step:
+    with PopenContext(['kicad2step', pcbFile + '.kicad_pcb', '-o' + outputDir + '/model']) as kicad2step:
         time.sleep(5)
         kicad2step.terminate()
 
     print("Exported model.step")
+
 
 def export_gerbers(pcbFile, outputDir, withSilkScreen):
     board = pcbnew.LoadBoard(pcbFile + KICAD_PCB_EXTENSION)
@@ -73,7 +80,7 @@ def export_gerbers(pcbFile, outputDir, withSilkScreen):
 
     # set plot options
     popt.SetPlotFrameRef(False)
-    #popt.SetLineWidth(pcbnew.FromMM(0.05))
+    # popt.SetLineWidth(pcbnew.FromMM(0.05))
     popt.SetAutoScale(False)
     popt.SetScale(1)
 
@@ -90,40 +97,41 @@ def export_gerbers(pcbFile, outputDir, withSilkScreen):
     popt.SetOutputDirectory(tempdir)
 
     plotPlan = [
-        ( "F_Cu", pcbnew.F_Cu, "Top layer" ),
-        ( "B_Cu", pcbnew.B_Cu, "Bottom layer" ),
-        ( "F_Mask", pcbnew.F_Mask, "Mask top" ),
-        ( "B_Mask", pcbnew.B_Mask, "Mask bottom" ),
-        ( "Edge_Cuts", pcbnew.Edge_Cuts, "Edges" ),
+        ("F_Cu", pcbnew.F_Cu, "Top layer"),
+        ("B_Cu", pcbnew.B_Cu, "Bottom layer"),
+        ("F_Mask", pcbnew.F_Mask, "Mask top"),
+        ("B_Mask", pcbnew.B_Mask, "Mask bottom"),
+        ("Edge_Cuts", pcbnew.Edge_Cuts, "Edges"),
     ]
     if with4layers:
         plotPlan += [
-            ( "In1_Cu", pcbnew.In1_Cu, "Top internal layer" ),
-            ( "In2_Cu", pcbnew.In2_Cu, "Bottom internal layer" ),
+            ("In1_Cu", pcbnew.In1_Cu, "Top internal layer"),
+            ("In2_Cu", pcbnew.In2_Cu, "Bottom internal layer"),
         ]
     if withSilkScreen:
         plotPlan += [
-            ( "F_Silk", pcbnew.F_SilkS, "Silk top" ),
-            ( "B_Silk", pcbnew.B_SilkS, "Silk top" ),
+            ("F_Silk", pcbnew.F_SilkS, "Silk top"),
+            ("B_Silk", pcbnew.B_SilkS, "Silk top"),
         ]
     if withPaste:
         plotPlan += [
-            ( "F_Paste", pcbnew.F_Paste, "Paste top" ),
-            ( "B_Paste", pcbnew.B_Paste, "Paste Bottom" ),
+            ("F_Paste", pcbnew.F_Paste, "Paste top"),
+            ("B_Paste", pcbnew.B_Paste, "Paste Bottom"),
         ]
 
     for layerInfo in plotPlan:
         pctl.SetLayer(layerInfo[1])
-        pctl.OpenPlotfile(layerInfo[0], pcbnew.PLOT_FORMAT_GERBER, layerInfo[2])
+        pctl.OpenPlotfile(
+            layerInfo[0], pcbnew.PLOT_FORMAT_GERBER, layerInfo[2])
         pctl.PlotLayer()
 
     # plot drill files
     drlWriter = pcbnew.EXCELLON_WRITER(board)
     drlWriter.SetMapFileFormat(pcbnew.PLOT_FORMAT_GERBER)
     drlWriter.SetOptions(aMirror=False, aMinimalHeader=False,
-                        aOffset=pcbnew.wxPoint(0, 0), aMerge_PTH_NPTH=False)
+                         aOffset=pcbnew.wxPoint(0, 0), aMerge_PTH_NPTH=False)
     drlWriter.SetFormat(True, pcbnew.EXCELLON_WRITER.DECIMAL_FORMAT, 3, 3)
-    drlWriter.CreateDrillandMapFilesSet( pctl.GetPlotDirName(), True, False )
+    drlWriter.CreateDrillandMapFilesSet(pctl.GetPlotDirName(), True, False)
 
     pctl.ClosePlot()
 
@@ -140,6 +148,7 @@ def export_gerbers(pcbFile, outputDir, withSilkScreen):
 
     print("Exported gerbers.zip")
 
+
 def export_bom(annotationFile, outputDir, projectName):
     # Generate an instance of a generic netlist
     net = kicad_netlist_reader.netlist(annotationFile)
@@ -152,8 +161,10 @@ def export_bom(annotationFile, outputDir, projectName):
         exit(1)
 
     # Create a new csv writer object to use as the output formatter
-    out = csv.writer(f, lineterminator='\n', delimiter=';', quotechar='\"', quoting=csv.QUOTE_ALL)
-    out.writerow(['Reference', 'Value', 'Rating', 'Footprint', 'Purchase URL', 'Quantity', 'Distributor Code', 'Vendor'])
+    out = csv.writer(f, lineterminator='\n', delimiter=';',
+                     quotechar='\"', quoting=csv.QUOTE_ALL)
+    out.writerow(['Reference', 'Value', 'Rating', 'Footprint',
+                 'Purchase URL', 'Quantity', 'Distributor Code', 'Vendor'])
 
     # Get all of the components in groups of matching parts + values
     grouped = net.groupComponents()
@@ -168,20 +179,21 @@ def export_bom(annotationFile, outputDir, projectName):
             refs += '-'
             refs += component.getRef()
             c = component
-            
+
         refs = refs[1:]
-        
+
         # Fill in the component groups common data
         out.writerow([refs,
-                    c.getValue(),
-                    c.getField("Rating"), 
-                    c.getFootprint(),
-                    c.getField("Purchase URL"),                  
-                    len(group),
-                    c.getField("Distributor Code"),
-                    c.getField("Distributor")])
+                      c.getValue(),
+                      c.getField("Rating"),
+                      c.getFootprint(),
+                      c.getField("Purchase URL"),
+                      len(group),
+                      c.getField("Distributor Code"),
+                      c.getField("Distributor")])
 
     print("Exported bom.csv")
+
 
 def export_schematic(mainSchFile, outputDir):
     with PopenContext(['eeschema', mainSchFile]) as eeschema:
@@ -190,18 +202,18 @@ def export_schematic(mainSchFile, outputDir):
         waitForWindow('Schematic Editor')
 
         # open plotting window
-        xdotool(['key' ,'shift+ctrl+p'])
+        xdotool(['key', 'shift+ctrl+p'])
 
         # search for plotting window and focus it
         waitForWindow('Plot Schematic Options')
 
         # input output directory
-        xdotool(['type' , outputDir + '/'])
+        xdotool(['type', outputDir + '/'])
 
         # move to plot button by tabbing and press enter
-        for x in range(1,19):   
-            xdotool(['key','Tab'])
-        xdotool(['key','enter'])
+        for x in range(1, 19):
+            xdotool(['key', 'Tab'])
+        xdotool(['key', 'enter'])
 
         # wait for export to take place, 2 seconds should suffice
         time.sleep(3)
@@ -212,11 +224,12 @@ def export_schematic(mainSchFile, outputDir):
         if '.pdf' in f:
             rename(outputDir + '/' + f, outputDir + '/' + 'schematic.pdf')
             break
-    
+
     print("Exported schematic.pdf")
-    
+
+
 if __name__ == '__main__':
-    
+
     schFile = ''
     pcbFile = ''
     projectName = ''
@@ -226,15 +239,15 @@ if __name__ == '__main__':
     if (len(sys.argv) == 1):
         print("Missing arguemnts, use 'kirelease help' for a guide")
         exit(0)
-    
+
     if (sys.argv[1] == 'help'):
-        print("From root of the KiCad project, use:\n\n"\
-            "kirelease <schFile> <pcbFile> <projectName>\n\n"
-            "<schFile> is the root .kicad_sch file in the schematic hirearchy\n"\
-            "<pcbFile> is the .kicad_pcb file\n"\
-            "<projectName> is the name for the output files, only needed for first release\n"\
-            "--no-silk to not plot silkscreen layers\n\n"\
-            "If a 'release' folder is not present, one will be created.")
+        print("From root of the KiCad project, use:\n\n"
+              "kirelease <schFile> <pcbFile> <projectName>\n\n"
+              "<schFile> is the root .kicad_sch file in the schematic hirearchy\n"
+              "<pcbFile> is the .kicad_pcb file\n"
+              "<projectName> is the name for the output files, only needed for first release\n"
+              "--no-silk to not plot silkscreen layers\n\n"
+              "If a 'release' folder is not present, one will be created.")
         exit(0)
 
     schFile = cwd + '/' + sys.argv[1]
@@ -245,9 +258,11 @@ if __name__ == '__main__':
     releaseNumber = getReleaseNumber(outputDir)
 
     # update var with projectName and releaseNumber
-    outputDir = outputDir + '/' + projectName + '_release_' + str(releaseNumber)
+    outputDir = outputDir + '/' + projectName + \
+        '_release_' + str(releaseNumber)
 
-    print("Exporting '" + projectName + '_release_' + str(releaseNumber) + "' ...")
+    print("Exporting '" + projectName +
+          '_release_' + str(releaseNumber) + "' ...")
 
     export_schematic(schFile, outputDir)
     export_step(pcbFile, outputDir)
@@ -263,7 +278,8 @@ if __name__ == '__main__':
         print("Generating BOM requires a fully annotated schematic. Missing .xml file.")
         exit(1)
 
-    export_gerbers(pcbFile, outputDir, False if '--no-silk' in sys.argv else True)
+    export_gerbers(pcbFile, outputDir,
+                   False if '--no-silk' in sys.argv else True)
 
-    print("Finished exporting '"+ projectName + '_release_' + str(releaseNumber) + "'")
-    
+    print("Finished exporting '" + projectName +
+          '_release_' + str(releaseNumber) + "'")
